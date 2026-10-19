@@ -1,0 +1,6 @@
+# Taxa maxima por IP de origem, em kbps (1 kbps = 1000 bit/s).
+# IP nao listado: 1000 kbps, se houver vazao livre no servidor.
+# IP            taxa_kbps
+127.0.0.1       8000
+127.0.0.2       4000
+127.0.0.3       2000

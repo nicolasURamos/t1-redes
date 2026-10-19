@@ -1,6 +1,10 @@
-/* Criado com apoio de ChatGPT/OpenAI em 05/10/2026. Ver README.md. */
+/* Criado com apoio de ChatGPT/OpenAI em 05/10/2026. Ver README.md.
+ * Versao 2 desenvolvida com apoio do Claude Code (Anthropic), 2026. Ver README.md.
+ * V2: envio com taxa controlada por IP (exceto HTML) e ganchos da medida de RTT.
+ */
 #include "arquivos.h"
 #include "http.h"
+#include "qos.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -31,7 +35,8 @@ static const char *tipo_mime(const char *nome)
 }
 
 int arquivos_responder(int socket_fd, int raiz_fd, const char *alvo,
-                      int fechar, int apenas_cabecalho)
+                      int fechar, int apenas_cabecalho,
+                      struct qos_ip *qos, struct timespec t_req)
 {
     char caminho[4096];
     size_t j = 0;
@@ -84,17 +89,33 @@ int arquivos_responder(int socket_fd, int raiz_fd, const char *alvo,
     if (!S_ISREG(st.st_mode) || st.st_size < 0) {
         close(atual); return http_erro(socket_fd, 403, fechar, apenas_cabecalho);
     }
+    /* A especificacao limita a taxa de todos os objetos, exceto o HTML. */
+    int eh_html = !strncmp(mime, "text/html", 9);
+    /* Pedido de objeto apos um HTML: fecha a medida de RTT deste IP. */
+    if (!eh_html && !apenas_cabecalho) qos_requisicao_objeto(qos, t_req);
     int resultado = http_cabecalho(socket_fd, 200, mime, (uintmax_t)st.st_size, fechar);
     uintmax_t restante = apenas_cabecalho ? 0 : (uintmax_t)st.st_size;
     char bloco[65536];
+    /* Com ritmo, blocos menores (~20 ms na taxa do IP) suavizam o envio. */
+    size_t maximo = sizeof bloco;
+    if (!eh_html && qos_tamanho_bloco(qos) < maximo) maximo = qos_tamanho_bloco(qos);
     while (resultado == 0 && restante) {
-        size_t quantidade = restante < sizeof bloco ? (size_t)restante : sizeof bloco;
+        size_t quantidade = restante < maximo ? (size_t)restante : maximo;
         ssize_t lidos = read(atual, bloco, quantidade);
         if (lidos < 0 && errno == EINTR) continue;
         if (lidos <= 0) { resultado = -1; break; }
+        /* Espera a vez deste bloco no relogio compartilhado do IP. */
+        if (!eh_html) qos_aguardar_envio(qos, (size_t)lidos);
         resultado = http_enviar(socket_fd, bloco, (size_t)lidos);
+        if (resultado == 0) qos_contabilizar(qos, (size_t)lidos);
         restante -= (uintmax_t)lidos;
     }
     close(atual);
+    /* HTML entregue: inicia a medida de RTT (espera o pedido do 1o objeto). */
+    if (resultado == 0 && eh_html && !apenas_cabecalho) {
+        struct timespec t_fim;
+        clock_gettime(CLOCK_MONOTONIC, &t_fim);
+        qos_html_enviado(qos, (size_t)st.st_size, t_req, t_fim);
+    }
     return resultado;
 }

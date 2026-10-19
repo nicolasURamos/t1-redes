@@ -1,11 +1,18 @@
 /* Criado com apoio de ChatGPT/OpenAI em 05/10/2026. Ver README.md.
+ * Versao 2 desenvolvida com apoio do Claude Code (Anthropic), 2026. Ver README.md.
  * Modelo: uma pthread destacada por conexao; nenhuma thread compartilha
  * buffers de requisicao. O descritor da pasta raiz e somente leitura.
+ * V2: controle de admissao por IP (qos.c) e thread de painel (painel.c).
  */
 #include "http.h"
+#include "painel.h"
+#include "qos.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -15,15 +22,43 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-struct cliente { int socket_fd; int raiz_fd; char ip[INET_ADDRSTRLEN]; };
+struct cliente {
+    int socket_fd;
+    int raiz_fd;
+    struct in_addr endereco;
+    char ip[INET_ADDRSTRLEN];
+};
+
+/* Recusa por falta de vazao: envia 503 e espera o cliente fechar (ate 1 s).
+ * Fechar com a requisicao ainda nao lida faria o kernel enviar RST, e o
+ * cliente poderia perder a resposta 503. */
+static void recusar(int fd)
+{
+    char descarte[4096];
+    struct timeval curto = {.tv_sec = 1, .tv_usec = 0};
+    http_erro(fd, 503, 1, 0);
+    shutdown(fd, SHUT_WR);
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &curto, sizeof curto);
+    while (recv(fd, descarte, sizeof descarte, 0) > 0) {}
+}
 
 static void *atender(void *arg)
 {
     struct cliente *c = arg;
-    fprintf(stderr, "Conectado: %s (socket %d)\n", c->ip, c->socket_fd);
-    http_atender(c->socket_fd, c->raiz_fd);
+    /* Controle de admissao: feito aqui (e nao no laco de accept) para que a
+     * espera de recusar() nunca atrase a aceitacao de outros clientes. */
+    struct qos_ip *qos = qos_admitir(c->endereco);
+    if (!qos) {
+        fprintf(stderr, "Recusado (vazao maxima atingida): %s (socket %d)\n",
+                c->ip, c->socket_fd);
+        recusar(c->socket_fd);
+    } else {
+        fprintf(stderr, "Conectado: %s (socket %d)\n", c->ip, c->socket_fd);
+        http_atender(c->socket_fd, c->raiz_fd, qos);
+        qos_liberar(qos);
+        fprintf(stderr, "Encerrado: %s (socket %d)\n", c->ip, c->socket_fd);
+    }
     close(c->socket_fd);
-    fprintf(stderr, "Encerrado: %s (socket %d)\n", c->ip, c->socket_fd);
     free(c);
     return NULL;
 }
@@ -32,8 +67,9 @@ int main(int argc, char **argv)
 {
     char *fim;
     long porta = 8080;
-    if (argc > 3) {
-        fprintf(stderr, "Uso: %s [porta] [pasta_publica]\n", argv[0]);
+    double vazao_max = 100000.0;
+    if (argc > 5) {
+        fprintf(stderr, "Uso: %s [porta] [pasta_publica] [vazao_max_kbps] [arquivo_taxas]\n", argv[0]);
         return EXIT_FAILURE;
     }
     if (argc > 1) {
@@ -45,8 +81,18 @@ int main(int argc, char **argv)
         }
     }
     const char *pasta = argc > 2 ? argv[2] : "www";
+    if (argc > 3) {
+        errno = 0;
+        vazao_max = strtod(argv[3], &fim);
+        if (errno || !*argv[3] || *fim || !isfinite(vazao_max) || vazao_max <= 0) {
+            fprintf(stderr, "Vazao maxima invalida. Use um numero de kbps maior que zero.\n");
+            return EXIT_FAILURE;
+        }
+    }
+    const char *arquivo_taxas = argc > 4 ? argv[4] : "taxas.txt";
     int raiz = open(pasta, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (raiz < 0) { perror("Pasta publica"); return EXIT_FAILURE; }
+    qos_iniciar(arquivo_taxas, vazao_max);
     /* Cliente desconectado nao deve encerrar o processo em send(). */
     signal(SIGPIPE, SIG_IGN);
     int servidor = socket(AF_INET, SOCK_STREAM, 0);
@@ -68,7 +114,9 @@ int main(int argc, char **argv)
     if (erro) { fprintf(stderr, "pthread_attr_init: %s\n", strerror(erro)); return EXIT_FAILURE; }
     erro = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     if (erro) { fprintf(stderr, "pthread_attr_setdetachstate: %s\n", strerror(erro)); return EXIT_FAILURE; }
-    fprintf(stderr, "HTTP: http://localhost:%ld | pasta: %s | Ctrl+C encerra\n", porta, pasta);
+    fprintf(stderr, "HTTP: http://localhost:%ld | pasta: %s | vazao max: %.0f kbps | Ctrl+C encerra\n",
+            porta, pasta, vazao_max);
+    if (painel_iniciar((int)porta) < 0) fprintf(stderr, "Aviso: painel nao iniciado\n");
     for (;;) {
         struct sockaddr_in remoto;
         socklen_t tamanho = sizeof remoto;
@@ -82,10 +130,15 @@ int main(int argc, char **argv)
             setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout) < 0) {
             perror("timeout"); close(fd); continue;
         }
+        /* Desliga o algoritmo de Nagle: sem isso, o corpo de uma resposta
+         * pequena (enviado apos o cabecalho) espera o ACK atrasado do cliente
+         * (~40 ms), o que atrasa a pagina e distorce a medida de RTT. */
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &sim, sizeof sim);
         struct cliente *c = malloc(sizeof *c);
         if (!c) { http_erro(fd, 503, 1, 0); close(fd); continue; }
         c->socket_fd = fd;
         c->raiz_fd = raiz;
+        c->endereco = remoto.sin_addr;
         if (!inet_ntop(AF_INET, &remoto.sin_addr, c->ip, sizeof c->ip))
             strcpy(c->ip, "desconhecido");
         pthread_t thread;

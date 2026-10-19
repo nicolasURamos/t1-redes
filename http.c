@@ -1,6 +1,8 @@
 /* Criado com apoio de ChatGPT/OpenAI em 05/10/2026. Ver README.md.
  * Referencia: RFC 9112, secoes 2, 5, 6 e 9 (HTTP/1.1).
  * Subconjunto didatico: GET/HEAD de arquivos estaticos, sem corpo na requisicao.
+ * Versao 2 desenvolvida com apoio do Claude Code (Anthropic), 2026. Ver README.md.
+ * V2: registra o instante de cada requisicao (medida de RTT) e Retry-After no 503.
  */
 #include "http.h"
 #include "arquivos.h"
@@ -56,11 +58,12 @@ int http_cabecalho(int fd, int status, const char *tipo, uintmax_t tamanho, int 
     if (!gmtime_r(&agora, &utc) ||
         !strftime(data, sizeof data, "%a, %d %b %Y %H:%M:%S GMT", &utc)) return -1;
     int n = snprintf(cabecalho, sizeof cabecalho,
-        "HTTP/1.1 %d %s\r\nDate: %s\r\nServer: Redes-V1\r\n"
+        "HTTP/1.1 %d %s\r\nDate: %s\r\nServer: Redes-V2\r\n"
         "Content-Type: %s\r\nContent-Length: %" PRIuMAX "\r\n"
         "Connection: %s\r\nCache-Control: no-store\r\n%s\r\n",
         status, motivo(status), data, tipo, tamanho, fechar ? "close" : "keep-alive",
-        status == 405 ? "Allow: GET, HEAD\r\n" : "");
+        status == 405 ? "Allow: GET, HEAD\r\n" :
+        status == 503 ? "Retry-After: 5\r\n" : "");
     if (n < 0 || (size_t)n >= sizeof cabecalho) return -1;
     return http_enviar(fd, cabecalho, (size_t)n);
 }
@@ -144,7 +147,7 @@ static int interpretar(char *cab, char **alvo, int *fechar, int *head)
     return 0;
 }
 
-void http_atender(int fd, int raiz_fd)
+void http_atender(int fd, int raiz_fd, struct qos_ip *qos)
 {
     char buffer[LIMITE + 1], cabecalho[LIMITE + 1];
     size_t usados = 0;
@@ -160,6 +163,9 @@ void http_atender(int fd, int raiz_fd)
             usados += (size_t)n;
             continue;
         }
+        /* Instante em que a requisicao ficou completa (usado no RTT). */
+        struct timespec t_req;
+        clock_gettime(CLOCK_MONOTONIC, &t_req);
         size_t tamanho = (size_t)(fim - buffer) + 4;
         memcpy(cabecalho, buffer, tamanho);
         cabecalho[tamanho] = '\0';
@@ -170,6 +176,6 @@ void http_atender(int fd, int raiz_fd)
         int status = interpretar(cabecalho, &alvo, &fechar, &head);
         /* Erros de sintaxe/corpo encerram a conexao para nao perder enquadramento. */
         if (status) { http_erro(fd, status, 1, head); return; }
-        if (arquivos_responder(fd, raiz_fd, alvo, fechar, head) < 0 || fechar) return;
+        if (arquivos_responder(fd, raiz_fd, alvo, fechar, head, qos, t_req) < 0 || fechar) return;
     }
 }
