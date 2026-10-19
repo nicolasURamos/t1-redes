@@ -1,6 +1,3 @@
-
-# t1-redes
-=======
 # Redes — servidor HTTP, versão 1
 
 ## Equipe
@@ -83,10 +80,9 @@ HEAD, persistência real no mesmo socket, close, fragmentação, pipelining, err
 travessia de diretórios e integridade de 24 downloads concorrentes com 12 workers.
 Também mantém um cliente incompleto conectado enquanto outros fazem downloads.
 
-**Estado de validação na criação:** o ambiente de geração é Windows, sem compilador
-Linux acessível; a consulta ao WSL foi negada. A compilação e os testes de integração
-não foram executados aqui. Executar `make` e `make test` em Linux antes da entrega.
-Não apresentar os testes descritos como resultados obtidos até executá-los.
+**Estado de validação:** em 18/10/2026, em Linux, `make` compilou sem warnings e
+`make test` passou em todos os grupos de testes. Esses testes verificam funcionalidade;
+as medidas de desempenho do relatório vêm dos experimentos com Wireshark e IPTraf.
 
 ## Experimento manual para o relatório
 
@@ -124,9 +120,10 @@ Este pacote não contém relatório com resultados nem publica um repositório n
 - Pthreads: https://www.man7.org/linux/man-pages/man7/pthreads.7.html
 - OpenAI, ChatGPT, assistência na geração e organização deste código, documentação
   e testes, em 05/10/2026: https://chatgpt.com/
+- Anthropic, Claude, revisão do repositório da versão 1 e planejamento da versão 2
+  (arquivo CLAUDE.md), em 18/10/2026: https://claude.ai/
 
 O código deste pacote foi gerado com apoio de IA. A equipe deve revisar, compreender,
 testar e adaptar a implementação, além de citar esse apoio no relatório da versão,
 conforme a especificação. Os arquivos de código também registram esse apoio.
 As imagens BMP são padrões sintéticos de teste produzidos programaticamente.
->>>>>>> 4a1e0cc (entrega 1)

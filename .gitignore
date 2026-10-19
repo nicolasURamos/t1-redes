@@ -1,0 +1,11 @@
+# Arquivos gerados pela compilação
+servidor
+*.o
+
+# Python
+__pycache__/
+
+# Capturas e logs dos experimentos (versionar só as usadas no relatório, se quiser)
+*.pcap
+*.pcapng
+servidor.log
