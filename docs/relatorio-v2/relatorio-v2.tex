@@ -219,7 +219,7 @@ requisição seguinte de um objeto daquele IP ($t_{\mathrm{req,obj}}$), calcula:
 
 O intervalo medido inclui o tempo que o cliente leva para processar o HTML; o atraso
 RTT/2 é, portanto, uma estimativa superior. A banda é a vazão efetiva de um ciclo
-completo, do pedido do HTML ao pedido do objeto; com HTML pequeno (688~bytes), ela é
+completo, do pedido do HTML ao pedido do objeto; com HTML pequeno (694~bytes), ela é
 dominada pelo RTT e subestima a capacidade do enlace. Como navegadores podem atrasar ou
 paralelizar os pedidos de imagens, os experimentos usam \texttt{wget} e \texttt{curl},
 como sugere a especificação. Cada medida também é registrada no log do servidor.
@@ -278,7 +278,7 @@ A equipe revisou, compilou e testou o código.
 Os experimentos foram executados em um computador com Windows e WSL2 (Ubuntu 22.04,
 GCC 11.4), com servidor e clientes na mesma máquina, pela interface de \textit{loopback}.
 Para representar clientes distintos, o \textit{script} \texttt{scripts/experimentos.sh}
-usa \texttt{curl --interface} com os endereços de origem 127.0.0.1, 127.0.0.2 e 127.0.0.3.
+usa \texttt{curl -{}-interface} com os endereços de origem 127.0.0.1, 127.0.0.2 e 127.0.0.3.
 O servidor foi iniciado com vazão máxima de 12000~kbps e com o arquivo de taxas do
 repositório (127.0.0.1: 8000~kbps; 127.0.0.2: 4000~kbps; 127.0.0.3: 2000~kbps). O objeto
 transferido é \texttt{imagem1.bmp}, de 3.145.782~bytes (25,17~Mbit). O tempo esperado de

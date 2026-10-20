@@ -74,6 +74,8 @@ IP               Con  Taxa(kbps)  Real(kbps)   RTT(ms)  Atraso(ms)  Banda(kbps)
 | scripts/experimentos.sh | **V2:** cenários de avaliação com curl e wget |
 | testes.py | Testes de integração (v1 + QoS) com a biblioteca padrão do Python |
 | www/ | `index.html` com três imagens BMP de 3.145.782 bytes cada |
+| docs/relatorio-v2/ | **V2:** relatório da versão 2 no modelo SBC (PDF e fonte LaTeX) |
+| CLAUDE.md | Instruções do projeto usadas pelo Claude Code (mapa do código, regras e decisões) |
 
 ## Comportamento implementado
 
